@@ -142,13 +142,15 @@
                 const grid = document.getElementById(`choices-${i}`);
                 grid.innerHTML = '';
                 document.getElementById(`zone-${i}`).classList.remove('eliminated');
-                document.getElementById(`submit-${i}`).style.display = (q.type === '복수정답') ? 'block' : 'none';
+                document.getElementById(`submit-${i}`).style.display = (q.type === '복수정답' || q.type === '순서') ? 'block' : 'none';
                 [1,2,3,4].forEach(n => {
                     const txt = q[`choice${n}`];
                     if(txt) {
                         const btn = document.createElement('button');
                         btn.className = 'choice-btn';
                         btn.innerText = txt;
+                        btn.dataset.baseText = txt;
+                        btn.dataset.choiceNum = n;
                         btn.onclick = () => handleChoice(i, n, btn);
                         grid.appendChild(btn);
                     }
@@ -157,12 +159,32 @@
             if(adminWin) updateControllerUI();
         }
 
+        function updateOrderChoiceLabels(pNum) {
+            const btns = document.querySelectorAll(`#choices-${pNum} .choice-btn`);
+            btns.forEach(btn => {
+                const cNum = parseInt(btn.dataset.choiceNum);
+                const orderIdx = playerSelections[pNum].indexOf(cNum);
+                btn.innerText = (orderIdx > -1) ? `${orderIdx + 1}. ${btn.dataset.baseText}` : btn.dataset.baseText;
+            });
+        }
+
         function handleChoice(pNum, sNum, btnElement) {
             if(isLocked) return;
-            if(quizData[currentIdx].type === '복수정답') {
+            const qType = quizData[currentIdx].type;
+            if(qType === '복수정답') {
                 const idx = playerSelections[pNum].indexOf(sNum);
                 if(idx > -1) { playerSelections[pNum].splice(idx, 1); btnElement.classList.remove('selected'); }
                 else { playerSelections[pNum].push(sNum); btnElement.classList.add('selected'); }
+            } else if(qType === '순서') {
+                const idx = playerSelections[pNum].indexOf(sNum);
+                if(idx > -1) {
+                    playerSelections[pNum].splice(idx, 1);
+                    btnElement.classList.remove('selected');
+                } else {
+                    playerSelections[pNum].push(sNum);
+                    btnElement.classList.add('selected');
+                }
+                updateOrderChoiceLabels(pNum);
             } else { checkSingleAnswer(pNum, sNum); }
         }
 
@@ -173,10 +195,17 @@
 
         function submitAnswer(pNum) {
             const q = quizData[currentIdx];
-            const correct = String(q.answer).split(',').map(n => parseInt(n.trim())).sort();
-            const user = playerSelections[pNum].sort();
-            if(JSON.stringify(correct) === JSON.stringify(user)) winRound(pNum, user);
-            else eliminatePlayer(pNum);
+            const correct = String(q.answer).split(',').map(n => parseInt(n.trim()));
+            const user = [...playerSelections[pNum]];
+            if(q.type === '순서') {
+                if(JSON.stringify(correct) === JSON.stringify(user)) winRound(pNum, user);
+                else eliminatePlayer(pNum);
+            } else {
+                const sortedCorrect = [...correct].sort();
+                const sortedUser = [...user].sort();
+                if(JSON.stringify(sortedCorrect) === JSON.stringify(sortedUser)) winRound(pNum, user);
+                else eliminatePlayer(pNum);
+            }
         }
 
         function winRound(pNum, answerList) {
