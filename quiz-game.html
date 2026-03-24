@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>전자칠판 대결 퀴즈 v6.2 (최종 완성본)</title>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+    <style>
+        :root { --p1: #ff5e5e; --p2: #5eafff; --p3: #5eff8b; --p4: #ffde5e; }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; font-family: 'Malgun Gothic', sans-serif; background-color: #1a1a1a; color: white; user-select: none; }
+        #setup-screen { position: absolute; inset: 0; background: linear-gradient(135deg, #2c3e50, #000); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 2000; }
+        .config-card { background: #34495e; padding: 40px; border-radius: 20px; text-align: center; border: 2px solid #555; }
+        #game-wrapper { display: none; width: 100vw; height: 100vh; flex-direction: column; }
+        #question-area { height: 60vh; width: 100%; position: relative; background: #222; display: flex; flex-direction: column; justify-content: center; align-items: center; border-bottom: 5px solid #444; box-sizing: border-box; }
+        #q-text { font-size: 2.8rem; font-weight: bold; margin-bottom: 20px; text-align: center; padding: 0 50px; line-height: 1.4; }
+        #q-image-box { height: 35vh; width: 80%; display: flex; justify-content: center; align-items: center; }
+        #q-image { max-height: 100%; max-width: 100%; border-radius: 15px; display: none; border: 8px solid #fff; }
+        #player-area { height: 40vh; width: 100%; display: flex; }
+        .player-zone { flex: 1; height: 100%; border-right: 2px solid #444; position: relative; display: flex; flex-direction: column; transition: 0.3s; }
+        .player-header { height: 50px; font-size: 2.5rem; text-align: center; padding: 5px; background: rgba(255,255,255,0.05); }
+        .choices-grid { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 10px; }
+        .choice-btn { background: #333; color: white; border: 2px solid #555; font-size: 1.4rem; font-weight: bold; border-radius: 10px; cursor: pointer; transition: 0.1s; }
+        .choice-btn.selected { background: #f39c12 !important; border-color: white; }
+        .submit-btn { height: 60px; margin: 0 10px 10px; background: #2980b9; color: white; border: none; font-size: 1.3rem; font-weight: bold; border-radius: 10px; cursor: pointer; display: none; }
+        #overlay-msg { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 5rem; font-weight: bold; color: #f1c40f; text-shadow: 0 0 30px black; z-index: 100; pointer-events: none; text-align: center; width: 90%; }
+        .eliminated { filter: grayscale(1); opacity: 0.2 !important; pointer-events: none; }
+        .correct-ans { background: #2ecc71 !important; border-color: #fff !important; transform: scale(1.05); }
+    </style>
+</head>
+<body>
+
+    <audio id="bgm-audio" loop>
+        <source src="bgm.mp3" type="audio/mpeg">
+    </audio>
+    <audio id="victory-audio">
+        <source src="victory.mp3" type="audio/mpeg">
+    </audio>
+
+    <div id="setup-screen">
+        <div class="config-card">
+            <h1>🎒 퀴즈 마스터 v6.2</h1>
+            <p>1. 엑셀 파일 업로드</p>
+            <input type="file" id="excel-input" accept=".xlsx, .xls"><br><br>
+            <p>2. 대결 인원 설정</p>
+            <select id="p-count-select" style="padding:10px; font-size:1rem; width: 200px;">
+                <option value="2">2명 대결 (1:1)</option>
+                <option value="3">3명 대결 (1:1:1)</option>
+                <option value="4">4명 대결 (1:1:1:1)</option>
+            </select><br><br>
+            <button id="start-btn" disabled style="padding:15px 40px; font-size:1.2rem; cursor:pointer; background:#27ae60; color:white; border:none; border-radius:10px;">게임 시작</button>
+        </div>
+    </div>
+
+    <div id="game-wrapper">
+        <div id="question-area">
+            <div id="q-text"></div>
+            <div id="q-image-box"><img id="q-image" src=""></div>
+            <div id="overlay-msg"></div>
+        </div>
+        <div id="player-area"></div>
+    </div>
+
+    <script>
+        let quizData = [];
+        let currentIdx = 0;
+        let pCount = 2;
+        let isLocked = false;
+        let adminWin = null;
+        let playerSelections = {}; 
+        const characters = ['🐶','🐱','🦊','🦁'];
+
+        const bgm = document.getElementById('bgm-audio');
+        const victorySfx = document.getElementById('victory-audio');
+
+        // --- 오디오 시스템 (SFX) ---
+        let audioCtx;
+        function playTone(freq, start, duration, type='sine', volume=0.1) {
+            if (!audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = type;
+            osc.frequency.setValueAtTime(freq, audioCtx.currentTime + start);
+            gain.gain.setValueAtTime(volume, audioCtx.currentTime + start);
+            gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + start + duration);
+            osc.connect(gain); gain.connect(audioCtx.destination);
+            osc.start(audioCtx.currentTime + start);
+            osc.stop(audioCtx.currentTime + start + duration);
+        }
+
+        function playDingDong() { playTone(523, 0, 0.4); playTone(659, 0.1, 0.4); playTone(783, 0.2, 0.6); }
+        function playLogout() { playTone(440, 0, 0.2, 'square', 0.05); playTone(330, 0.1, 0.2, 'square', 0.05); playTone(220, 0.2, 0.4, 'square', 0.05); }
+
+        // --- 파일 및 데이터 ---
+        document.getElementById('excel-input').onchange = (e) => {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const data = new Uint8Array(e.target.result);
+                const wb = XLSX.read(data, {type: 'array'});
+                quizData = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+                if(quizData.length > 0) document.getElementById('start-btn').disabled = false;
+            };
+            reader.readAsArrayBuffer(e.target.files[0]);
+        };
+
+        document.getElementById('start-btn').onclick = () => {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            bgm.volume = 0.5; // 배경음악 50% 볼륨
+            bgm.play().catch(e => console.log("BGM 파일이 없거나 로드 실패"));
+            
+            pCount = parseInt(document.getElementById('p-count-select').value);
+            document.getElementById('setup-screen').style.display = 'none';
+            document.getElementById('game-wrapper').style.display = 'flex';
+            initGameZones();
+            openController();
+        };
+
+        function initGameZones() {
+            const area = document.getElementById('player-area');
+            area.innerHTML = '';
+            for(let i=1; i<=pCount; i++) {
+                area.innerHTML += `
+                    <div class="player-zone" id="zone-${i}">
+                        <div class="player-header">${characters[i-1]}</div>
+                        <div class="choices-grid" id="choices-${i}"></div>
+                        <button class="submit-btn" id="submit-${i}" onclick="submitAnswer(${i})">제출하기</button>
+                    </div>`;
+            }
+            loadQuestion();
+        }
+
+        function loadQuestion() {
+            if(currentIdx >= quizData.length) return;
+            isLocked = false;
+            document.getElementById('overlay-msg').innerText = "";
+            const q = quizData[currentIdx];
+            document.getElementById('q-text').innerText = q.question;
+            const img = document.getElementById('q-image');
+            img.style.display = 'none'; img.src = q.image || "";
+            playerSelections = {};
+            for(let i=1; i<=pCount; i++) {
+                playerSelections[i] = [];
+                const grid = document.getElementById(`choices-${i}`);
+                grid.innerHTML = '';
+                document.getElementById(`zone-${i}`).classList.remove('eliminated');
+                document.getElementById(`submit-${i}`).style.display = (q.type === '복수정답') ? 'block' : 'none';
+                [1,2,3,4].forEach(n => {
+                    const txt = q[`choice${n}`];
+                    if(txt) {
+                        const btn = document.createElement('button');
+                        btn.className = 'choice-btn';
+                        btn.innerText = txt;
+                        btn.onclick = () => handleChoice(i, n, btn);
+                        grid.appendChild(btn);
+                    }
+                });
+            }
+            if(adminWin) updateControllerUI();
+        }
+
+        function handleChoice(pNum, sNum, btnElement) {
+            if(isLocked) return;
+            if(quizData[currentIdx].type === '복수정답') {
+                const idx = playerSelections[pNum].indexOf(sNum);
+                if(idx > -1) { playerSelections[pNum].splice(idx, 1); btnElement.classList.remove('selected'); }
+                else { playerSelections[pNum].push(sNum); btnElement.classList.add('selected'); }
+            } else { checkSingleAnswer(pNum, sNum); }
+        }
+
+        function checkSingleAnswer(pNum, sNum) {
+            if(sNum == quizData[currentIdx].answer) winRound(pNum, [sNum]);
+            else { eliminatePlayer(pNum); }
+        }
+
+        function submitAnswer(pNum) {
+            const q = quizData[currentIdx];
+            const correct = String(q.answer).split(',').map(n => parseInt(n.trim())).sort();
+            const user = playerSelections[pNum].sort();
+            if(JSON.stringify(correct) === JSON.stringify(user)) winRound(pNum, user);
+            else eliminatePlayer(pNum);
+        }
+
+        function winRound(pNum, answerList) {
+            isLocked = true;
+            document.getElementById('overlay-msg').innerText = `P${pNum} 정답! ⭕`;
+            answerList.forEach(num => {
+                const btns = document.querySelectorAll(`#choices-${pNum} .choice-btn`);
+                if(btns[num-1]) btns[num-1].classList.add('correct-ans');
+            });
+            playDingDong();
+            confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 } });
+        }
+
+        function eliminatePlayer(pNum) {
+            document.getElementById(`zone-${pNum}`).classList.add('eliminated');
+            playLogout();
+            checkSurvival();
+        }
+
+        function checkSurvival() {
+            const actives = document.querySelectorAll('.player-zone:not(.eliminated)');
+            if(actives.length === 1 && !isLocked) {
+                isLocked = true;
+                const winnerId = actives[0].id.split('-')[1];
+                document.getElementById('overlay-msg').innerText = `P${winnerId} 최후의 승자! 🏆`;
+                confetti({ particleCount: 200, spread: 100 });
+            } else if(actives.length === 0 && !isLocked) {
+                isLocked = true;
+                document.getElementById('overlay-msg').innerText = `모두 탈락! 💀`;
+            }
+        }
+
+        // --- 관리자 컨트롤러 ---
+        function openController() {
+            adminWin = window.open("", "Controller", "width=380,height=680");
+            adminWin.document.write(`
+                <html><head><title>선생님 패널</title>
+                <style>
+                    body { font-family: sans-serif; text-align: center; background: #f4f4f4; padding: 20px; }
+                    button { width: 100%; padding: 15px; margin: 8px 0; font-size: 1rem; border-radius: 10px; border: none; cursor: pointer; color: white; }
+                    .audio { background: #3498db; } .speed { background: #e67e22; } .next { background: #27ae60; } .finish { background: #9b59b6; margin-top: 20px; }
+                </style>
+                </head><body>
+                    <h3>👨‍🏫 관리 패널</h3>
+                    <div id="q-info" style="font-size:0.9rem; margin-bottom:10px; background:#ddd; padding:5px;"></div>
+                    <button class="audio" onclick="window.opener.ctrlTTS()">🔊 TTS 듣기</button>
+                    <p>TTS 속도: <span id="v_tts">0.80</span></p>
+                    <input type="range" id="tts_rate" min="0.5" max="2.0" step="0.1" value="0.8" oninput="document.getElementById('v_tts').innerText=parseFloat(this.value).toFixed(2)">
+                    <button class="speed" onclick="window.opener.ctrlImg()">👀 이미지 보기</button>
+                    <p>노출: <span id="v_img">0.50</span></p>
+                    <input type="range" id="sd" min="0.05" max="1.0" step="0.05" value="0.5" oninput="document.getElementById('v_img').innerText=parseFloat(this.value).toFixed(2)">
+                    <hr>
+                    <button class="next" onclick="window.opener.ctrlNext()">다음 문제 ⏭️</button>
+                    <button class="finish" onclick="window.opener.ctrlFinish()">최종 게임 종료 🏆</button>
+                </body></html>
+            `);
+            setTimeout(updateControllerUI, 500);
+        }
+
+        function updateControllerUI() {
+            if(!adminWin) return;
+            const q = quizData[currentIdx];
+            adminWin.document.getElementById('q-info').innerText = `[Q${currentIdx+1}] 정답: ${q.answer}`;
+        }
+
+        window.ctrlNext = () => { currentIdx++; loadQuestion(); };
+        window.ctrlTTS = () => {
+            const u = new SpeechSynthesisUtterance(quizData[currentIdx].audio_text);
+            u.lang = 'en-US'; u.rate = parseFloat(adminWin.document.getElementById('tts_rate').value);
+            speechSynthesis.speak(u);
+        };
+        window.ctrlImg = () => {
+            const img = document.getElementById('q-image');
+            img.style.display = 'block';
+            const dur = parseFloat(adminWin.document.getElementById('sd').value) * 1000;
+            setTimeout(() => { if(quizData[currentIdx].type === '스피드') img.style.display = 'none'; }, dur);
+        };
+        
+        // 최종 종료 버튼 클릭 시
+        window.ctrlFinish = () => {
+            bgm.pause(); // 배경음악 정지
+            bgm.currentTime = 0;
+            
+            victorySfx.play().catch(e => console.log("Victory 파일이 없거나 로드 실패")); // 환호성 재생
+            
+            if(adminWin) adminWin.close(); // 관리패널 닫기
+
+            document.getElementById('game-wrapper').innerHTML = `
+                <div style="display:flex; flex-direction:column; justify-content:center; align-items:center; height:100vh; background:#000;">
+                    <h1 style="font-size:8rem; color:#ffeb3b; animation:pulse 0.5s infinite alternate;">축하합니다!</h1>
+                    <p style="font-size:3rem; color:#fff;">오늘의 퀴즈 대결이 종료되었습니다.</p>
+                    <button onclick="location.reload()" style="margin-top:50px; padding:20px 50px; font-size:2rem; cursor:pointer;">다시 하기</button>
+                </div>`;
+            setInterval(() => { confetti(); }, 2000);
+        };
+    </script>
+</body>
+</html>
