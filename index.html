@@ -393,19 +393,20 @@
                 <style>
                     body { font-family: sans-serif; text-align: center; background: #f4f4f4; padding: 20px; }
                     button { width: 100%; padding: 15px; margin: 8px 0; font-size: 1rem; border-radius: 10px; border: none; cursor: pointer; color: white; }
+                    button:disabled { opacity: 0.45; filter: grayscale(0.5); cursor: not-allowed; }
                     .audio { background: #3498db; } .speed { background: #e67e22; } .next { background: #27ae60; } .finish { background: #9b59b6; margin-top: 20px; }
                 </style>
                 </head><body>
                     <h3>👨‍🏫 관리 패널</h3>
                     <div id="q-info" style="font-size:0.9rem; margin-bottom:10px; background:#ddd; padding:5px;"></div>
-                    <button class="audio" onclick="window.opener.ctrlTTS()">🔊 TTS 듣기</button>
+                    <button id="tts-btn" class="audio" onclick="window.opener.ctrlTTS()">🔊 TTS 듣기</button>
                     <p>TTS 속도: <span id="v_tts">0.80</span></p>
                     <input type="range" id="tts_rate" min="0.5" max="2.0" step="0.1" value="0.8" oninput="document.getElementById('v_tts').innerText=parseFloat(this.value).toFixed(2)">
-                    <button class="speed" onclick="window.opener.ctrlImg()">👀 이미지 보기</button>
+                    <button id="img-btn" class="speed" onclick="window.opener.ctrlImg()">👀 이미지 보기</button>
                     <p>노출: <span id="v_img">0.50</span></p>
                     <input type="range" id="sd" min="0.05" max="1.0" step="0.05" value="0.5" oninput="document.getElementById('v_img').innerText=parseFloat(this.value).toFixed(2)">
                     <hr>
-                    <button class="next" onclick="window.opener.ctrlNext()">다음 문제 ⏭️</button>
+                    <button id="next-btn" class="next" onclick="window.opener.ctrlNext()">다음 문제 ⏭️</button>
                     <button class="finish" onclick="window.opener.ctrlFinish()">최종 게임 종료 🏆</button>
                 </body></html>
             `);
@@ -414,17 +415,34 @@
 
         function updateControllerUI() {
             if(!adminWin) return;
+            if(currentIdx >= quizData.length) return;
             const q = quizData[currentIdx];
             adminWin.document.getElementById('q-info').innerText = `[Q${currentIdx+1}] 정답: ${q.answer}`;
+            const hasAudioText = q.audio_text !== undefined && q.audio_text !== null && String(q.audio_text).trim() !== "";
+            const hasImage = q.image !== undefined && q.image !== null && String(q.image).trim() !== "";
+            const hasNextQuestion = currentIdx < quizData.length - 1;
+            adminWin.document.getElementById('tts-btn').disabled = !hasAudioText;
+            adminWin.document.getElementById('img-btn').disabled = !hasImage;
+            adminWin.document.getElementById('next-btn').disabled = !hasNextQuestion;
         }
 
-        window.ctrlNext = () => { currentIdx++; loadQuestion(); };
+        window.ctrlNext = () => {
+            if(currentIdx >= quizData.length - 1) return;
+            currentIdx++;
+            loadQuestion();
+        };
         window.ctrlTTS = () => {
+            if(currentIdx >= quizData.length) return;
+            const txt = quizData[currentIdx].audio_text;
+            if(txt === undefined || txt === null || String(txt).trim() === "") return;
             const u = new SpeechSynthesisUtterance(quizData[currentIdx].audio_text);
             u.lang = 'en-US'; u.rate = parseFloat(adminWin.document.getElementById('tts_rate').value);
             speechSynthesis.speak(u);
         };
         window.ctrlImg = () => {
+            if(currentIdx >= quizData.length) return;
+            const imgSrc = quizData[currentIdx].image;
+            if(imgSrc === undefined || imgSrc === null || String(imgSrc).trim() === "") return;
             const img = document.getElementById('q-image');
             img.style.display = 'block';
             const dur = parseFloat(adminWin.document.getElementById('sd').value) * 1000;
