@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>전자칠판 대결 퀴즈 v6.4 (최종 완성본)</title>
+    <title>전자칠판 대결 퀴즈 v6.5 (관리패널)</title>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
     <style>
@@ -26,7 +26,7 @@
         }
         #game-wrapper { display: none; width: 100vw; height: 100vh; flex-direction: column; }
         #question-area {
-            height: 60vh;
+            height: 48vh;
             width: 100%;
             position: relative;
             background: linear-gradient(160deg, #1e1e1e, #2c2c2c 35%, #181818);
@@ -48,7 +48,7 @@
             pointer-events: none;
         }
         #q-text {
-            font-size: 2.8rem;
+            font-size: 2.4rem;
             font-weight: bold;
             margin-bottom: 20px;
             text-align: center;
@@ -57,7 +57,7 @@
             text-shadow: 0 3px 15px rgba(0, 0, 0, 0.85), 0 0 10px rgba(255, 255, 255, 0.15);
             z-index: 1;
         }
-        #q-image-box { height: 35vh; width: 80%; display: flex; justify-content: center; align-items: center; }
+        #q-image-box { height: 22vh; width: 80%; display: flex; justify-content: center; align-items: center; }
         #q-image {
             max-height: 100%;
             max-width: 100%;
@@ -67,7 +67,7 @@
             box-shadow: 0 0 35px rgba(255,255,255,0.35);
             z-index: 1;
         }
-        #player-area { height: 40vh; width: 100%; display: flex; }
+        #player-area { height: 52vh; width: 100%; display: flex; }
         .player-zone {
             flex: 1;
             height: 100%;
@@ -90,7 +90,64 @@
             background: rgba(255,255,255,0.08);
             text-shadow: 0 0 12px rgba(255,255,255,0.35);
         }
-        .choices-grid { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 10px; }
+        .choices-grid { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 10px; min-height: 0; }
+        .choices-grid.spelling-mode {
+            display: flex !important;
+            flex-direction: column;
+            gap: 8px;
+            padding-top: 10px;
+            overflow: hidden;
+        }
+        .spell-slots {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 10px;
+            padding: 4px 6px 0;
+        }
+        .spell-slot {
+            width: 52px;
+            height: 58px;
+            border: 2px solid #666;
+            border-radius: 12px;
+            background: rgba(0,0,0,0.18);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.85rem;
+            font-weight: 800;
+            letter-spacing: 0.02em;
+            box-shadow: inset 0 0 0 1px rgba(255,255,255,0.05);
+            color: rgba(255,255,255,0.75);
+            transition: box-shadow 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+            user-select: none;
+        }
+        .spell-slot.filled { color: rgba(255,255,255,0.95); border-color: rgba(243,156,18,0.95); box-shadow: 0 0 16px rgba(243,156,18,0.35); background: rgba(243,156,18,0.12); }
+        .spell-slot.caret { outline: 3px solid rgba(110,167,255,0.6); outline-offset: 1px; }
+        .spell-slot.correct { border-color: rgba(46,204,113,0.95); background: rgba(46,204,113,0.14); box-shadow: 0 0 16px rgba(46,204,113,0.45); color: rgba(255,255,255,0.98); }
+        .spell-slot.wrong { border-color: rgba(255,94,94,0.95); background: rgba(255,94,94,0.14); box-shadow: 0 0 16px rgba(255,94,94,0.45); color: rgba(255,255,255,0.98); }
+
+        .spell-keyboard {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 8px;
+            padding: 4px 6px 6px;
+        }
+        .spell-key {
+            height: 40px;
+            border-radius: 12px;
+            border: 2px solid #666;
+            background: linear-gradient(160deg, #3b3b3b, #2a2a2a);
+            color: #fff;
+            font-size: 1.15rem;
+            font-weight: 800;
+            cursor: pointer;
+            transition: transform 0.12s ease, box-shadow 0.12s ease, filter 0.12s ease;
+            user-select: none;
+        }
+        .spell-key:hover { transform: translateY(-2px); box-shadow: 0 10px 20px rgba(0,0,0,0.3), 0 0 12px rgba(255,255,255,0.12); filter: brightness(1.05); }
+        .spell-key:active { transform: translateY(0px) scale(0.98); }
+        .spell-key.backspace { font-size: 1rem; }
         .choice-btn {
             background: linear-gradient(160deg, #3b3b3b, #2a2a2a);
             color: white;
@@ -118,6 +175,7 @@
             transition: transform 0.12s ease, filter 0.12s ease;
         }
         .submit-btn:hover { transform: translateY(-2px); filter: brightness(1.08); }
+        .submit-btn:disabled { opacity: 0.45; filter: grayscale(0.5); cursor: not-allowed; transform: none; }
         #overlay-msg {
             position: absolute;
             top: 50%;
@@ -184,6 +242,8 @@
         let isLocked = false;
         let adminWin = null;
         let playerSelections = {}; 
+        let spellingInputs = {}; // 스펠링 타입에서 플레이어가 입력한 글자 배열
+        let spellingCorrect = {}; // 스펠링 타입 정답 문자열
         const characters = ['🐶','🐱','🦊','🦁'];
 
         const bgm = document.getElementById('bgm-audio');
@@ -289,21 +349,35 @@
                 const grid = document.getElementById(`choices-${i}`);
                 grid.innerHTML = '';
                 document.getElementById(`zone-${i}`).classList.remove('eliminated');
-                document.getElementById(`submit-${i}`).style.display = (q.type === '복수정답' || q.type === '순서') ? 'block' : 'none';
-                [1,2,3,4].forEach(n => {
-                    const txt = q[`choice${n}`];
-                    if(txt) {
-                        const btn = document.createElement('button');
-                        btn.className = 'choice-btn';
-                        btn.innerText = txt;
-                        btn.dataset.baseText = txt;
-                        btn.dataset.choiceNum = n;
-                        btn.onclick = () => handleChoice(i, n, btn);
-                        grid.appendChild(btn);
-                    }
-                });
+                document.getElementById(`submit-${i}`).disabled = false;
+                document.getElementById(`submit-${i}`).style.display = (q.type === '복수정답' || q.type === '순서' || q.type === '스펠링') ? 'block' : 'none';
+
+                grid.classList.remove('spelling-mode');
+                if(q.type === '스펠링') {
+                    initSpellingForPlayer(i, q);
+                } else {
+                    [1,2,3,4].forEach(n => {
+                        const txt = q[`choice${n}`];
+                        if(txt) {
+                            const btn = document.createElement('button');
+                            btn.className = 'choice-btn';
+                            btn.innerText = txt;
+                            btn.dataset.baseText = txt;
+                            btn.dataset.choiceNum = n;
+                            btn.onclick = () => handleChoice(i, n, btn);
+                            grid.appendChild(btn);
+                        }
+                    });
+                }
             }
             if(adminWin) updateControllerUI();
+        }
+
+        function setAllSubmitDisabled(disabled) {
+            for(let i=1; i<=pCount; i++) {
+                const btn = document.getElementById(`submit-${i}`);
+                if(btn) btn.disabled = disabled;
+            }
         }
 
         function updateOrderChoiceLabels(pNum) {
@@ -312,6 +386,137 @@
                 const cNum = parseInt(btn.dataset.choiceNum);
                 const orderIdx = playerSelections[pNum].indexOf(cNum);
                 btn.innerText = (orderIdx > -1) ? `${orderIdx + 1}. ${btn.dataset.baseText}` : btn.dataset.baseText;
+            });
+        }
+
+        // --- 스펠링 타입 (가상 터치 키보드) ---
+        function initSpellingForPlayer(pNum, q) {
+            const grid = document.getElementById(`choices-${pNum}`);
+            // 엑셀에 불필요한 공백이 섞여도 입력 불가능한 슬롯이 생기지 않도록 제거
+            const correctWord = String(q.answer ?? '').replace(/\s+/g, '').trim();
+            spellingCorrect[pNum] = correctWord;
+            spellingInputs[pNum] = new Array(correctWord.length).fill('');
+
+            grid.classList.add('spelling-mode');
+            grid.innerHTML = `
+                <div class="spell-slots" id="spell-slots-${pNum}"></div>
+                <div class="spell-keyboard" id="spell-kb-${pNum}"></div>
+            `;
+
+            renderSpellSlots(pNum);
+            renderSpellKeyboard(pNum);
+        }
+
+        function renderSpellKeyboard(pNum) {
+            const kbEl = document.getElementById(`spell-kb-${pNum}`);
+            if(!kbEl) return;
+            kbEl.innerHTML = '';
+
+            const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+            letters.forEach(L => {
+                const b = document.createElement('button');
+                b.className = 'spell-key';
+                b.innerText = L;
+                b.onclick = () => handleSpellKey(pNum, L);
+                kbEl.appendChild(b);
+            });
+
+            const back = document.createElement('button');
+            back.className = 'spell-key backspace';
+            back.innerText = '⌫';
+            back.onclick = () => handleSpellBackspace(pNum);
+            kbEl.appendChild(back);
+        }
+
+        function renderSpellSlots(pNum) {
+            const slotsEl = document.getElementById(`spell-slots-${pNum}`);
+            if(!slotsEl) return;
+            const inputs = spellingInputs[pNum] || [];
+            const correctWord = spellingCorrect[pNum] || '';
+
+            // 슬롯이 이미 만들어져 있지 않으면(첫 진입) 생성
+            if(slotsEl.children.length !== inputs.length) {
+                slotsEl.innerHTML = '';
+                for(let idx = 0; idx < inputs.length; idx++) {
+                    const slot = document.createElement('div');
+                    slot.className = 'spell-slot';
+                    slot.dataset.slotIndex = idx;
+                    slot.innerText = '_';
+                    slotsEl.appendChild(slot);
+                }
+            }
+
+            const firstEmpty = inputs.findIndex(v => v === '');
+            const caretIdx = (firstEmpty === -1) ? (inputs.length > 0 ? inputs.length - 1 : -1) : firstEmpty;
+
+            const slotNodes = slotsEl.querySelectorAll('.spell-slot');
+            slotNodes.forEach(slot => {
+                const idx = parseInt(slot.dataset.slotIndex);
+                const val = inputs[idx];
+                slot.classList.toggle('filled', !!val);
+                slot.classList.toggle('caret', idx === caretIdx);
+
+                // 스펠링 편집 중에는 입력값/언더바만 표시
+                slot.classList.remove('correct');
+                slot.classList.remove('wrong');
+                slot.innerText = val ? val : '_';
+            });
+
+            // correctWord가 있어도 편집 중에는 `_`/입력값만 보여줌
+        }
+
+        function handleSpellKey(pNum, letter) {
+            if(isLocked) return;
+            const inputs = spellingInputs[pNum];
+            if(!inputs) return;
+
+            const idx = inputs.findIndex(v => v === '');
+            if(idx === -1) return; // 더 이상 입력 불가
+            inputs[idx] = letter;
+            renderSpellSlots(pNum);
+        }
+
+        function handleSpellBackspace(pNum) {
+            if(isLocked) return;
+            const inputs = spellingInputs[pNum];
+            if(!inputs) return;
+
+            for(let idx = inputs.length - 1; idx >= 0; idx--) {
+                if(inputs[idx]) {
+                    inputs[idx] = '';
+                    renderSpellSlots(pNum);
+                    return;
+                }
+            }
+        }
+
+        function revealSpellResult(pNum, isCorrect) {
+            const slotsEl = document.getElementById(`spell-slots-${pNum}`);
+            if(!slotsEl) return;
+            const inputs = spellingInputs[pNum] || [];
+            const correctWord = spellingCorrect[pNum] || '';
+            const slotNodes = slotsEl.querySelectorAll('.spell-slot');
+
+            slotNodes.forEach(slot => {
+                const idx = parseInt(slot.dataset.slotIndex);
+                const correctChar = correctWord[idx] || '';
+                const typedChar = inputs[idx] || '';
+
+                slot.classList.remove('caret');
+                slot.classList.remove('filled');
+                slot.classList.remove('correct');
+                slot.classList.remove('wrong');
+
+                if(isCorrect) {
+                    slot.classList.add('correct');
+                    slot.innerText = correctChar || '_';
+                } else {
+                    // 입력이 맞는 자리만 초록, 틀린 자리는 빨강
+                    const isPosCorrect = typedChar && typedChar.toUpperCase() === correctChar.toUpperCase();
+                    slot.classList.add(isPosCorrect ? 'correct' : 'wrong');
+                    // 제출 시에는 정답을 드러내기 위해 정답 글자를 채움
+                    slot.innerText = correctChar || '_';
+                }
             });
         }
 
@@ -341,7 +546,27 @@
         }
 
         function submitAnswer(pNum) {
+            if(isLocked) return;
+            const btn = document.getElementById(`submit-${pNum}`);
+            if(btn && btn.disabled) return;
             const q = quizData[currentIdx];
+            if(q.type === '스펠링') {
+                const inputs = spellingInputs[pNum] || [];
+                const correctWord = spellingCorrect[pNum] !== undefined ? spellingCorrect[pNum] : String(q.answer ?? '').trim();
+                const userWord = inputs.join('');
+
+                const norm = (s) => String(s).replace(/\s+/g, '').toLowerCase();
+                if(norm(userWord) === norm(correctWord)) {
+                    revealSpellResult(pNum, true);
+                    winRound(pNum, []);
+                } else {
+                    revealSpellResult(pNum, false);
+                    document.getElementById('overlay-msg').innerText = `P${pNum} 오답! ✖`;
+                    eliminatePlayer(pNum);
+                }
+                return;
+            }
+
             const correct = String(q.answer).split(',').map(n => parseInt(n.trim()));
             const user = [...playerSelections[pNum]];
             if(q.type === '순서') {
@@ -357,6 +582,7 @@
 
         function winRound(pNum, answerList) {
             isLocked = true;
+            setAllSubmitDisabled(true);
             document.getElementById('overlay-msg').innerText = `P${pNum} 정답! ⭕`;
             answerList.forEach(num => {
                 const btns = document.querySelectorAll(`#choices-${pNum} .choice-btn`);
@@ -368,6 +594,8 @@
 
         function eliminatePlayer(pNum) {
             document.getElementById(`zone-${pNum}`).classList.add('eliminated');
+            const btn = document.getElementById(`submit-${pNum}`);
+            if(btn) btn.disabled = true;
             playLogout();
             checkSurvival();
         }
@@ -376,11 +604,13 @@
             const actives = document.querySelectorAll('.player-zone:not(.eliminated)');
             if(actives.length === 1 && !isLocked) {
                 isLocked = true;
+                setAllSubmitDisabled(true);
                 const winnerId = actives[0].id.split('-')[1];
                 document.getElementById('overlay-msg').innerText = `P${winnerId} 최후의 승자! 🏆`;
                 confetti({ particleCount: 200, spread: 100 });
             } else if(actives.length === 0 && !isLocked) {
                 isLocked = true;
+                setAllSubmitDisabled(true);
                 document.getElementById('overlay-msg').innerText = `모두 탈락! 💀`;
             }
         }
@@ -395,6 +625,10 @@
                     button { width: 100%; padding: 15px; margin: 8px 0; font-size: 1rem; border-radius: 10px; border: none; cursor: pointer; color: white; }
                     button:disabled { opacity: 0.45; filter: grayscale(0.5); cursor: not-allowed; }
                     .audio { background: #3498db; } .speed { background: #e67e22; } .next { background: #27ae60; } .finish { background: #9b59b6; margin-top: 20px; }
+                    #next-preview { text-align: left; background: #fff; border-radius: 12px; padding: 12px; border: 1px solid #ddd; margin-top: 10px; }
+                    #next-preview .label { font-size: 0.85rem; color: #555; font-weight: 700; margin-bottom: 6px; }
+                    #next-preview .meta { font-size: 0.9rem; color: #222; font-weight: 700; margin-bottom: 6px; }
+                    #next-preview .q { font-size: 0.9rem; color: #333; line-height: 1.3; }
                 </style>
                 </head><body>
                     <h3>👨‍🏫 관리 패널</h3>
@@ -407,6 +641,11 @@
                     <input type="range" id="sd" min="0.05" max="1.0" step="0.05" value="0.5" oninput="document.getElementById('v_img').innerText=parseFloat(this.value).toFixed(2)">
                     <hr>
                     <button id="next-btn" class="next" onclick="window.opener.ctrlNext()">다음 문제 ⏭️</button>
+                    <div id="next-preview">
+                        <div class="label">다음 문제 미리보기</div>
+                        <div class="meta" id="next-meta">-</div>
+                        <div class="q" id="next-q">-</div>
+                    </div>
                     <button class="finish" onclick="window.opener.ctrlFinish()">최종 게임 종료 🏆</button>
                 </body></html>
             `);
@@ -424,6 +663,21 @@
             adminWin.document.getElementById('tts-btn').disabled = !hasAudioText;
             adminWin.document.getElementById('img-btn').disabled = !hasImage;
             adminWin.document.getElementById('next-btn').disabled = !hasNextQuestion;
+
+            const nextMetaEl = adminWin.document.getElementById('next-meta');
+            const nextQEl = adminWin.document.getElementById('next-q');
+            if(nextMetaEl && nextQEl) {
+                if(hasNextQuestion) {
+                    const nq = quizData[currentIdx + 1];
+                    const nType = (nq && nq.type !== undefined && nq.type !== null && String(nq.type).trim() !== "") ? String(nq.type).trim() : "(유형 없음)";
+                    const nQuestion = (nq && nq.question !== undefined && nq.question !== null && String(nq.question).trim() !== "") ? String(nq.question).trim() : "(질문 없음)";
+                    nextMetaEl.innerText = `type: ${nType}`;
+                    nextQEl.innerText = nQuestion;
+                } else {
+                    nextMetaEl.innerText = "다음 문제 없음";
+                    nextQEl.innerText = "";
+                }
+            }
         }
 
         window.ctrlNext = () => {
